@@ -336,14 +336,14 @@ plot_list
 
 ## k means clustering
 ```{r}
-peak_data_numeric <- peak_data_filtered %>% 
-  mutate(treatment = gsub("230213_Smp_Tfinal", "", filename)) %>%
-  mutate(treatment = gsub(".mzML", "", treatment)) %>% 
-  mutate(treatment = gsub("230213_Smp_T0", "", treatment)) %>% 
-  mutate(treatment_numeric = as.numeric(as.factor(treatment))) %>% 
-  mutate(compound_numeric = gsub("FT", "", compound)) %>%
-  mutate(compound_numeric = as.numeric(compound_numeric)) %>%
-  select("treatment_numeric", "area", "compound_numeric")
+# peak_data_numeric <- peak_data_filtered %>% 
+#   mutate(treatment = gsub("230213_Smp_Tfinal", "", filename)) %>%
+#   mutate(treatment = gsub(".mzML", "", treatment)) %>% 
+#   mutate(treatment = gsub("230213_Smp_T0", "", treatment)) %>% 
+#   mutate(treatment_numeric = as.numeric(as.factor(treatment))) %>% 
+#   mutate(compound_numeric = gsub("FT", "", compound)) %>%
+#   mutate(compound_numeric = as.numeric(compound_numeric)) %>%
+#   select("treatment_numeric", "area", "compound_numeric")
 
 peak_data_numeric <- peak_data_filtered %>% 
   mutate(treatment = gsub("230213_Smp_Tfinal", "", filename)) %>%
@@ -353,16 +353,7 @@ peak_data_numeric <- peak_data_filtered %>%
   mutate(compound_numeric = as.numeric(compound_numeric)) %>%
   select("treatment", "area", "compound_numeric")
 
-
-# peak_data_numeric <- peak_data_filtered %>% 
-#   mutate(treatment = as.numeric(as.factor(treatment))) %>% 
-#   select("compound", "area", "treatment") %>% 
-#   mutate(compound_numeric = gsub("FT", "", compound)) %>% 
-#   mutate(compound_numeric = as.numeric(compound_numeric)) %>% 
-#   select(-c("compound")) %>% 
-#   na.omit()
-
-# my pivot_wider is combining all triplicates into 1 treatment per feature
+set.seed(20)
 
 peak_data_numeric <- peak_data_numeric %>% 
   pivot_wider(names_from = treatment, values_from = area) %>% 
@@ -375,9 +366,55 @@ peak_filtered_km <- kmeans(peak_data_scaled, centers = 8, nstart = 25)
 
 table(peak_filtered_km$cluster)
 
+peak_clusters <- as.data.frame(peak_filtered_km$cluster) %>% 
+  rename(cluster = `peak_filtered_km$cluster`) 
+
 peak_filtered_km$cluster
+
+# write code to plot each cluster
 ```
 
+```{r}
+peak_data_numeric_vis <- peak_data_numeric %>% 
+  mutate(cluster = as.character(peak_filtered_km$cluster)) %>% 
+  mutate(row_names = row.names(peak_data_numeric)) %>% 
+  mutate(id = row_number()) %>% 
+  remove_rownames %>% 
+  column_to_rownames(var = "id") %>% 
+  rename(compound = row_names)
+
+peak_data_km_vis <- peak_data_numeric_vis %>% 
+  pivot_longer(
+    cols = c("Tote_1", "Tote_2", "Tote_3", "Tote_4", "C_1", "C_2", "C_3", "N_1", "N_2",
+             "N_3", "F_1", "F_2", "F_3", "NF_1", "NF_2", "NF_3", "NP_1", "NP_2", "NP_3",
+             "NPF_1", "NPF_2", "NPF_3", "P_1", "P_2", "P_3", "PF_1", "PF_2", "PF_3"),
+    names_to = "treatment", values_to = "area") %>% 
+  left_join(peak_data_filtered, by = "area") %>% 
+  select(-c("treatment.y", "compound.y")) %>% 
+  rename(treatment = treatment.x) %>% 
+  rename(compound = compound.x)
+```
+
+```{r}
+ggplot(peak_data_km_vis) +
+  geom_boxplot(aes(x = treatment, y = area, color = cluster)) 
+```
+
+
+```{r}
+ggplot(subset(peak_data_km_vis, cluster %in% 1)) +
+  geom_boxplot(aes(x = treatment, y = area, color = compound)) + 
+  theme(legend.position = "none") +
+  ylim(0, 1e+08)
+```
+
+
+```{r}
+ggplot(peak_data_km_vis) +
+  geom_boxplot(aes(x = treatment, y = area, color = compound)) +
+  facet_wrap(~cluster, scales = "free_y") + 
+  theme(legend.position = "none")
+```
 
 
 ## k means visualization
