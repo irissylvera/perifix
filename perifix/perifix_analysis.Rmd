@@ -362,7 +362,7 @@ peak_data_numeric <- peak_data_numeric %>%
 
 peak_data_scaled <- scale(peak_data_numeric) 
  
-peak_filtered_km <- kmeans(peak_data_scaled, centers = 8, nstart = 25)
+peak_filtered_km <- kmeans(peak_data_scaled, centers = 12, nstart = 25)
 
 table(peak_filtered_km$cluster)
 
@@ -399,21 +399,24 @@ peak_data_km_vis <- peak_data_numeric_vis %>%
 ggplot(peak_data_km_vis) +
   geom_boxplot(aes(x = treatment, y = area, color = cluster)) 
 ```
+# Notes
+hierarchical clustering instead of k-means? create synthetic compound that behaves like how i want (i.e. low in N and P but high in NP). analyze dendrogram. group together n-added and n-deplete and do a basic t test. boxplots! upregulation of iron (iron-deplete vs iron-added), etc. Phosphorus too!
+
+classifying softwares - identifying chemical formula of 
+
+```{r}
+ggplot(subset(peak_data_km_vis, cluster %in% 12)) +
+  geom_boxplot(aes(x = treatment, y = area, color = compound)) + 
+  theme(legend.position = "none") 
+```
+
+
 
 
 ```{r}
 ggplot(subset(peak_data_km_vis, cluster %in% 1)) +
-  geom_boxplot(aes(x = treatment, y = area, color = compound)) + 
-  theme(legend.position = "none") +
-  ylim(0, 1e+08)
-```
-
-
-```{r}
-ggplot(peak_data_km_vis) +
-  geom_boxplot(aes(x = treatment, y = area, color = compound)) +
-  facet_wrap(~cluster, scales = "free_y") + 
-  theme(legend.position = "none")
+  geom_col(aes(x=treatment, y=area, fill = compound), width = 0.5, 
+           position = "fill")
 ```
 
 
@@ -432,6 +435,25 @@ fviz_cluster(peak_filtered_km, data = peak_data_numeric,
 #   plotly::plot_ly(x=~compound_numeric, y=~treatment_numeric, z=~compound_numeric, color=~factor(kmeans_class),
 #                   type="scatter3d", mode="markers")
 ```
+
+# Interactive Plotly
+```{r}
+p <- peak_data_km_vis %>%
+  filter(area >= 2e+08) %>% 
+  ggplot( aes(compound, treatment, size = area, color=cluster)) +
+  geom_point() +
+  theme_bw() + 
+  ggtitle("Peak Area of Unknown Metabolites Across Varying Environmental Conditions") + 
+  ylab("Added Nutrients and Replicate ID") + 
+  xlab("Metabolite ID") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) + 
+  scale_color_manual(values = c("indianred4", "lightsalmon2", "lightsteelblue3", "skyblue", "steelblue4", "springgreen4", 
+                                "olivedrab", "orchid3", "palevioletred2", "mediumpurple4", "gold", "goldenrod3"))
+
+ggplotly(p)
+
+```
+
 
 # Boxplot distributions of most abundant compounds
 ## FT1191
