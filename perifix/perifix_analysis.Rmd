@@ -101,13 +101,15 @@ peak_data_filtered <- peak_data %>%
 # Initial untargeted exploration - heatmaply, perimat, pca, mds
 ```{r}
 library(heatmaply)
-peak_data_filtered %>%
+plotheatmap <- peak_data_filtered %>%
   group_by(compound) %>%
   mutate(norm_area=rank(area)) %>%
   pivot_wider(id_cols = filename, names_from = "compound", values_from = "norm_area") %>%
   column_to_rownames("filename") %>%
   data.matrix() %>%
   heatmaply()
+
+ggplotly(plotheatmap)
 ```
 
 ```{r}
@@ -309,7 +311,8 @@ biggest_peaks_all %>%
   ggplot() +
   geom_col(aes(x=treatment, y=into, fill = feat_id), width = 0.5, 
            position = "stack") + 
-  scale_fill_manual(values = mycolors)
+  scale_fill_manual(values = mycolors) +
+  ggtitle("Top 10 Largest Metabolites in Unfiltered Dataset")
 ```
 
 ```{r}
@@ -319,7 +322,8 @@ biggest_peaks_good %>%
   ggplot() +
   geom_col(aes(x=treatment, y=area, fill = compound), width = 0.5, 
            position = "stack") + 
-  scale_fill_manual(values = mycolors)
+  scale_fill_manual(values = mycolors) +
+  ggtitle("Top 10 Largest Metabolites in Filtered Good Peak Dataset")
 ```
 
 ## Distributions for entire filtered dataset
@@ -334,7 +338,7 @@ for(i in 1:length(split_eics)){
 plot_list
 ```
 
-## k means clustering
+## data sorting for clustering
 ```{r}
 # peak_data_numeric <- peak_data_filtered %>% 
 #   mutate(treatment = gsub("230213_Smp_Tfinal", "", filename)) %>%
@@ -353,6 +357,13 @@ peak_data_numeric <- peak_data_filtered %>%
   mutate(compound_numeric = as.numeric(compound_numeric)) %>%
   select("treatment", "area", "compound_numeric")
 
+peak_data_numeric_export <- peak_data_numeric %>% 
+  rownames_to_column() %>% 
+  rename(compound = rowname)
+  
+
+write.csv(peak_data_numeric_export, "data_working/peak_data_numeric.csv", row.names = FALSE)
+
 set.seed(20)
 
 peak_data_numeric <- peak_data_numeric %>% 
@@ -360,6 +371,25 @@ peak_data_numeric <- peak_data_numeric %>%
   remove_rownames %>% 
   column_to_rownames(var = "compound_numeric")
 
+peak_data_scaled <- scale(peak_data_numeric) 
+```
+
+
+## hierarchical clustering
+```{r}
+hclust_peak_data <- peak_data_km_vis %>% 
+  select(-c(cluster)) %>% 
+  group_by(compound, treatment)
+
+hclust <- hclust(dist(peak_data_numeric[, 1:4]), method = "average")
+
+plot(hclust)
+```
+
+
+
+## k means clustering
+```{r}
 peak_data_scaled <- scale(peak_data_numeric) 
  
 peak_filtered_km <- kmeans(peak_data_scaled, centers = 12, nstart = 25)
@@ -439,18 +469,24 @@ fviz_cluster(peak_filtered_km, data = peak_data_numeric,
 # Interactive Plotly
 ```{r}
 p <- peak_data_km_vis %>%
+  group_by(compound,) %>% 
+  mutate(area = mean(area)) %>% 
   filter(area >= 2e+08) %>% 
-  ggplot( aes(compound, treatment, size = area, color=cluster)) +
+  ggplot(aes(compound, treatment, size = area, color = cluster)) +
   geom_point() +
   theme_bw() + 
   ggtitle("Peak Area of Unknown Metabolites Across Varying Environmental Conditions") + 
   ylab("Added Nutrients and Replicate ID") + 
   xlab("Metabolite ID") + 
   theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) + 
-  scale_color_manual(values = c("indianred4", "lightsalmon2", "lightsteelblue3", "skyblue", "steelblue4", "springgreen4", 
-                                "olivedrab", "orchid3", "palevioletred2", "mediumpurple4", "gold", "goldenrod3"))
+  scale_color_manual(values = c("indianred4", "lightsalmon3", "lightsteelblue3", "skyblue", 
+                                "steelblue4", "springgreen4", "olivedrab", "pink1", 
+                                "plum3", "mediumpurple4", "lightgoldenrod3", "darkgoldenrod3")) + 
+  theme(legend.position = "none")
 
 ggplotly(p)
+
+write.csv(peak_data_km_vis, "data_working/peak_data.csv", row.names = FALSE)
 
 ```
 
