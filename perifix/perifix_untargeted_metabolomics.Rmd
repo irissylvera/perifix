@@ -1,26 +1,32 @@
 ---
-title: "perifix_analysis"
+title: "perifix_untargeted_metabolomics"
 author: "Iris Kern"
-date: "2023-03-10"
+date: "2023-05-11"
 output: html_document
 ---
 
+#Libraries and set up
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-```
 
-# Environment setup
-```{r}
 library(tidyverse)
+library(xcms)
 library(ggplot2)
 library(RaMS)
 library(data.table)
 library(readr)
 library(rstatix)
 library(RColorBrewer)
+library(vegan)
+library(dendextend)
+library(factoextra)
+library(ggalluvial)
+library(ggbarribbon)
+library(broom)
+library(purrr)
 ```
 
-# Load Data
+# Load data and wrangle
 ```{r}
 fls <- list.files('../../mzMLs/pos', full.names = TRUE)
 fls <- as.data.frame(fls) %>% 
@@ -43,22 +49,20 @@ metadataframe <- fls %>%
 
 msnexp_withpeaks <- readRDS('msnexp_withpeaks.rds')
 msnexp_filled <- readRDS('msnexp_filled.rds')
+
+set.seed(20)
 ```
 
+## MS data: load in pooled samples
 ```{r}
-head(rtime(msnexp_filled))
+# msdata <- msnexp_filled %>%
+#   fileNames() %>%
+#   str_subset("Poo") %>%
+#   grabMSdata()
 ```
 
-```{r}
-# mzs <- mz(msnexp_filled)
 
-## Split the list by file
-# mzs_by_file <- split(mzs, f = fromFile(msnexp_filled))
-
-# length(mzs_by_file)
-```
-
-# Dataframe from msnexp file
+## Make dataframes from msnexp rds file
 ```{r}
 peak_data_long <- msnexp_filled %>%
   chromPeaks() %>%
@@ -78,13 +82,10 @@ peak_data <- msnexp_filled %>%
   filter(samp_type=="Smp")
 ```
 
-# Selecting good peaks from Will's PCA
+## Filter peaks using Will's program
 ```{r}
 good_peaks <- read_csv('chosen_feats.csv')
-# compound name, file name, area
-```
 
-```{r}
 peak_data_filtered <- peak_data %>% 
   filter(samp_type=="Smp") %>% 
   select(compound = feat_id, filename, area = into, mz, rt, treatment) %>% 
@@ -98,20 +99,8 @@ peak_data_filtered <- peak_data %>%
   select(-n)
 ```
 
-# Initial untargeted exploration - heatmaply, perimat, pca, mds
-```{r}
-library(heatmaply)
-plotheatmap <- peak_data_filtered %>%
-  group_by(compound) %>%
-  mutate(norm_area=rank(area)) %>%
-  pivot_wider(id_cols = filename, names_from = "compound", values_from = "norm_area") %>%
-  column_to_rownames("filename") %>%
-  data.matrix() %>%
-  heatmaply()
-
-ggplotly(plotheatmap)
-```
-
+# NMDS Plot
+## Wrangle data for NMDS
 ```{r}
 peri_mat <- peak_data_filtered %>%
   mutate(filename=str_remove(filename, "230213_Smp_")) %>%
@@ -120,19 +109,10 @@ peri_mat <- peak_data_filtered %>%
   pivot_wider(id_cols = filename, names_from = "compound", values_from = "norm_area") %>%
   column_to_rownames("filename") %>%
   data.matrix()
-
-# Run a PCA and plot the samples only
-pcaout <- prcomp(peri_mat)
-plot(pcaout$x[,1], pcaout$x[,2], type="n", xlim=c(-90, 90))
-text(pcaout$x[,1], pcaout$x[,2], labels = rownames(pcaout$x))
-pdf("pcaout.pdf", width=8, height = 10.5)
-biplot(pcaout)
-dev.off()
-# color by treatment, use periscope colors
 ```
 
+## Plot NMDS
 ```{r}
-library(vegan)
 mdsout <- peri_mat %>%
   metaMDS(k = 2, autotransform = FALSE)
 
@@ -158,64 +138,10 @@ mdsout$points %>%
   geom_point(aes(x=MDS1, y=MDS2, color=col_id), size=4) +
   scale_color_identity(guide = "legend") +
   theme_bw()
-  
 ```
 
+# Matching standards list
 ```{r}
-good_peak_match <- peak_data_filtered %>% 
-  select(compound, mz, rt, treatment, area) %>% 
-  group_by(compound) %>% 
-  summarise(mz = mean(mz), rt = mean(rt))
-```
-
-# MSData
-```{r}
-msdata <- msnexp_filled %>%
-  fileNames() %>%
-  str_subset("Poo") %>%
-  grabMSdata()
-```
-
-# Targeted things
-```{r}
-guanine_mz <- 152.057235
-
-guanine_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(guanine_mz, ppm=5))
-
-ggplot(guanine_data) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-```
-
-```{r}
-gbetaine_mz <- 118.086804
-
-gbetaine_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(gbetaine_mz, ppm=5))
-
-ggplot(gbetaine_data) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-```
-
-```{r}
-threonine_mz <- 120.066069
-
-threonine_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(threonine_mz, ppm=5))
-
-ggplot(threonine_data) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-```
-
-# Untargeted Pipeline
-## Note: need to correct to internal standards (which correction creates the least variation) (BMIS), and subtract out blanks.
-## Loading in internal standards
-```{r}
-dat <- peak_data_filtered
-
 int_stds <- read_csv('https://raw.githubusercontent.com/IngallsLabUW/Ingalls_Standards/master/Ingalls_Lab_Standards.csv') %>% 
   rename(compound = Compound_Name) %>% 
   filter(Compound_Type == "Internal Standard") %>% 
@@ -223,49 +149,43 @@ int_stds <- read_csv('https://raw.githubusercontent.com/IngallsLabUW/Ingalls_Sta
   mutate(Concentration_nM = Concentration_uM * 1000) %>%
   select(-c(Concentration_uM)) %>% 
   select(c(compound, mz, RT_minute, z, Concentration_nM))
-  
 ```
 
-## BMIS for Pre-Selected Good Peaks
+## For loop matching internal standards to peak_data_filtered
 ```{r}
 int_eics = list()
 for (i in 1:length(int_stds$mz)) {
   mz_i <- int_stds$mz[i]
   name_i <- int_stds$compound[i]
-  int_eics[[i]] <- dat %>%
+  int_eics[[i]] <- peak_data_filtered %>%
     filter(mz%between%pmppm(mz_i, ppm = 5)) %>% 
     mutate(int_std = name_i)
 }
 ```
-This finds 2 internal standards: trimethylamine n-oxide and l-arginine
 
-## BMIS for Entire Dataset
+## For loop matching internal standards to peak_data
 ```{r}
-data_all <- peak_data %>% 
-  rename("compound" = "feat_id")
-
 int_eics_all = list()
 for (i in 1:length(int_stds$mz)) {
   mz_i <- int_stds$mz[i]
   name_i <- int_stds$compound[i]
-  int_eics_all[[i]] <- data_all %>%
+  int_eics_all[[i]] <- peak_data %>%
     filter(mz%between%pmppm(mz_i, ppm = 5)) %>% 
     mutate(int_std = name_i)
 }
 ```
-This finds 9 internal standards: arsenobetaine, cytosine, dl-alanine, dl-proline, glycine betaine, guanine, homarine, trimethylamine n-oxide, l-arginine. 
 
-# Peak abundances and statistical testing
-## Filtering for "biggest" peaks for entire dataset and filtered dataset
+# Metabolite Absolute and Relative Abundances
+## Color setup
 ```{r}
 nb.cols <- 10
 mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(nb.cols)
 
-mycolors <- c("coral4", "lightgoldenrod3", "darkgoldenrod3", "aquamarine4", "aquamarine3", "darkslategray2", 
-              "mediumpurple4", "mediumpurple1", "plum", "mistyrose3","gray60")
-
 mycolors <- c(mycolors, "gray60")
+```
 
+## Filter for 10 most abundant compounds in peak_data_filtered and peak_data
+```{r}
 biggest_peaks_all <- peak_data %>% 
   arrange(desc(into)) %>%
   mutate(feat_id=ifelse(feat_id%in%unique(feat_id)[1:10], feat_id, "Other")) %>%
@@ -283,11 +203,8 @@ biggest_peaks_good <- peak_data_filtered %>%
   drop_na()
 ```
 
-# Abundances
-## Barplots for relative/absolute abundances for entire dataset and filtered dataset
-### filled barplot of entire dataset
+## Relative metabolite abundance for peak_data
 ```{r}
-# relative abundance
 biggest_peaks_all %>% 
   group_by(feat_id, treatment) %>%
   summarise(into=sum(into)) %>%
@@ -296,7 +213,8 @@ biggest_peaks_all %>%
            position = "fill") + 
   scale_fill_manual(values = mycolors)
 ```
-### filled barplot of most abundant metabolites
+
+## Relative metabolite abundance for peak_data_filtered
 ```{r}
 biggest_peaks_good %>% 
   group_by(compound, treatment) %>%
@@ -307,9 +225,9 @@ biggest_peaks_good %>%
   scale_fill_manual(values = mycolors) + 
   ggtitle("Selected Metabolites and Their Relative Abundances Across Treatments")
 ```
-### stacked barplot of all metabolites
+
+## Absolute metabolite abundace of peak_data
 ```{r}
-# absolute abundance
 biggest_peaks_all %>% 
   group_by(feat_id, treatment) %>%
   summarise(into=sum(into)) %>%
@@ -319,7 +237,8 @@ biggest_peaks_all %>%
   scale_fill_manual(values = mycolors) +
   ggtitle("Top 10 Largest Metabolites in Unfiltered Dataset")
 ```
-### Stacked barplot of most abundant metabolites
+
+## Absolute metabolite abundance of peak_data_filtered
 ```{r}
 biggest_peaks_good %>% 
   group_by(compound, treatment) %>%
@@ -331,7 +250,8 @@ biggest_peaks_good %>%
   ggtitle("Top 10 Largest Metabolites in Filtered Good Peak Dataset")
 ```
 
-## Distributions for entire filtered dataset
+# Peak areas across treatment groups for every compound in peak_data_filtered
+## DON'T RUN UNLESS YOU NEED IT
 ```{r}
 split_eics <- split(peak_data_filtered, peak_data_filtered$compound)
 plot_list <- list()
@@ -343,18 +263,9 @@ for(i in 1:length(split_eics)){
 plot_list
 ```
 
-# Statistical clustering (hierarchical and k means)
-## data sorting for clustering
+# Hierarchical clustering
+## Data wrangling for peak_data_filtered
 ```{r}
-# peak_data_numeric <- peak_data_filtered %>% 
-#   mutate(treatment = gsub("230213_Smp_Tfinal", "", filename)) %>%
-#   mutate(treatment = gsub(".mzML", "", treatment)) %>% 
-#   mutate(treatment = gsub("230213_Smp_T0", "", treatment)) %>% 
-#   mutate(treatment_numeric = as.numeric(as.factor(treatment))) %>% 
-#   mutate(compound_numeric = gsub("FT", "", compound)) %>%
-#   mutate(compound_numeric = as.numeric(compound_numeric)) %>%
-#   select("treatment_numeric", "area", "compound_numeric")
-
 peak_data_numeric <- peak_data_filtered %>% 
   mutate(treatment = gsub("230213_Smp_Tfinal", "", filename)) %>%
   mutate(treatment = gsub(".mzML", "", treatment)) %>% 
@@ -363,37 +274,15 @@ peak_data_numeric <- peak_data_filtered %>%
   mutate(compound_numeric = as.numeric(compound_numeric)) %>%
   select("treatment", "area", "compound_numeric")
 
-peak_data_numeric_export <- peak_data_numeric %>% 
-  rownames_to_column() %>% 
-  rename(compound = rowname)
-  
-
-write.csv(peak_data_numeric_export, "data_working/peak_data_numeric.csv", row.names = FALSE)
-
-set.seed(20)
-
 peak_data_numeric <- peak_data_numeric %>% 
   pivot_wider(names_from = treatment, values_from = area) %>% 
   remove_rownames %>% 
   column_to_rownames(var = "compound_numeric")
 
 peak_data_scaled <- t(scale(t(peak_data_numeric)))
-rowSums(peak_data_scaled)
 ```
 
-
-## hierarchical clustering
-```{r}
-library(dendextend)
-hclust_peak_data <- hclust(dist(peak_data_scaled, method = 'euclidean'))
-
-plot(hclust_peak_data)
-
-dend_hclust <- as.dendrogram(hclust_peak_data)
-dend_hclust_color <- color_branches(dend_hclust, k = 8)
-plot(dend_hclust_color)
-```
-
+## Data wrangling for metabolites with peak area > 1e+08
 ```{r}
 peak_data_numeric_abun <- peak_data_filtered %>% 
   mutate(treatment = gsub("230213_Smp_Tfinal", "", filename)) %>%
@@ -411,17 +300,40 @@ peak_data_numeric_abun_wide <- peak_data_numeric_abun %>%
   mutate_all(~replace_na(.,0))
 
 peak_data_scaled_abun <- t(scale(t(peak_data_numeric_abun_wide)))
+```
 
+## Run hierarchical clustering for all peak_data_filtered
+```{r}
+hclust_peak_data <- hclust(dist(peak_data_scaled, method = 'euclidean'))
+```
+
+### Dendrogram visualization of hierarchical clustering - full dataset
+```{r}
+plot(hclust_peak_data)
+
+dend_hclust <- as.dendrogram(hclust_peak_data)
+dend_hclust_color <- color_branches(dend_hclust, k = 8)
+plot(dend_hclust_color)
+```
+
+## Run hierarchical clustering for most abundant metabolites
+```{r}
 hclust_peak_data_abun <- hclust(dist(peak_data_scaled_abun, method = 'euclidean'))
 
 cut_avg <- cutree(hclust_peak_data_abun, k = 12)
+```
 
+### Dendrogram visualization of hierarchical clustering - abundant metabolites
+```{r}
 plot(hclust_peak_data_abun)
 
 dend_hclust_abun <- as.dendrogram(hclust_peak_data_abun)
 dend_hclust_color_abun <- color_branches(dend_hclust_abun, h = 4)
 plot(dend_hclust_color_abun)
+```
 
+### Putting hierarchical clustering data into long format for additional visualization
+```{r}
 hclust_cl <- mutate(peak_data_numeric_abun_wide, clusters = cut_avg )
 
 hclust_cl_long <- hclust_cl %>% 
@@ -435,18 +347,16 @@ hclust_cl_long <- hclust_cl %>%
   select(-c("treatment.y", "rt", "filename")) %>% 
   rename(treatment = treatment.x)
 
-```
-
-
-
-```{r}
 hclust_cl_long <- hclust_cl_long %>% 
   mutate(cluster = as.character(clusters)) %>% 
   mutate(compound = str_remove(compound, "FT")) %>% 
   mutate(compound = str_remove(compound, "0")) %>% 
   mutate(compound = str_remove(compound, "00")) %>% 
   mutate(compound = str_remove(compound, "000"))
+```
 
+### Dot plot of peak areas and hierarchical clustering - abundant metabolites
+```{r}
 hclust_plotly <- hclust_cl_long %>% 
   group_by(treatment) %>% 
   mutate(mean_area = mean(area)) %>% 
@@ -466,8 +376,8 @@ hclust_plotly <- hclust_cl_long %>%
 ggplotly(hclust_plotly)
 ```
 
-
-## k means clustering
+# K means clustering
+## Data wrangling of peak_data_filtered
 ```{r}
 peak_data_scaled <- t(scale(t(peak_data_numeric)))
  
@@ -477,12 +387,9 @@ table(peak_filtered_km$cluster)
 
 peak_clusters <- as.data.frame(peak_filtered_km$cluster) %>% 
   rename(cluster = `peak_filtered_km$cluster`) 
-
-peak_filtered_km
-
-# write code to plot each cluster
 ```
 
+## Data wrangling for k-means visualization
 ```{r}
 peak_data_numeric_vis <- peak_data_numeric %>% 
   mutate(cluster = as.character(peak_filtered_km$cluster)) %>% 
@@ -503,52 +410,25 @@ peak_data_km_vis <- peak_data_numeric_vis %>%
   rename(treatment = treatment.x) %>% 
   rename(compound = compound.x)
 ```
-### trying to visualize clusters
+
+## K-means visualization
+### Visualization of different clusters in ggplot
 ```{r}
-ggplot(peak_data_km_vis) +
-  geom_boxplot(aes(x = treatment, y = area, color = cluster)) 
-```
-
-hierarchical clustering instead of k-means? create synthetic compound that behaves like how i want (i.e. low in N and P but high in NP). analyze dendrogram. group together n-added and n-deplete and do a basic t test. boxplots! upregulation of iron (iron-deplete vs iron-added), etc. Phosphorus too!
-
-classifying softwares - identifying chemical formula of 
-
-```{r}
-ggplot(subset(peak_data_km_vis, cluster %in% 12)) +
+ggplot(subset(peak_data_km_vis, cluster %in% 8)) +
   geom_boxplot(aes(x = treatment, y = area, color = compound)) + 
   theme(legend.position = "none") 
 ```
 
-
-
-
+### Fviz cluster
 ```{r}
-ggplot(subset(peak_data_km_vis)) +
-  geom_col(aes(x=treatment, y=area, fill = cluster), width = 0.5, 
-           position = "fill") + 
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) + 
-  theme_bw()
-```
-
-
-### k means visualization
-```{r}
-library(factoextra)
-
 fviz_cluster(peak_filtered_km, data = peak_data_numeric,
              geom = "point",
              ellipse.type = "convex", 
              ggtheme = theme_bw()
              )
-
-# peak_data_numeric %>%
-#   mutate(kmeans_class=kmeans(., centers=8)$cluster) %>%
-#   plotly::plot_ly(x=~compound_numeric, y=~treatment_numeric, z=~compound_numeric, color=~factor(kmeans_class),
-#                   type="scatter3d", mode="markers")
 ```
 
-# Interactive Plotly
-## filtered by peak area > 2e+08
+### Dot plot of peak areas and k-means clustering - peak_data_filtered
 ```{r}
 peak_data_km_vis$treatment[peak_data_km_vis$treatment == "Tote_1"] <- "T0_1"
 peak_data_km_vis$treatment[peak_data_km_vis$treatment == "Tote_2"] <- "T0_2"
@@ -574,12 +454,9 @@ p <- peak_data_km_vis %>%
   theme(legend.position = "none")
 
 ggplotly(p)
-
-# write.csv(peak_data_km_vis, "data_working/peak_data.csv", row.names = FALSE)
-
 ```
 
-## filtered by peak area > 1e+08
+### Dot plot of peak areas (>1e+08) and k-means clustring
 ```{r}
 q <- peak_data_km_vis %>%
   group_by(compound) %>% 
@@ -600,10 +477,9 @@ q <- peak_data_km_vis %>%
 ggplotly(q)
 ```
 
-# Alluvial attempt
+# Alluvial/geom_bar_ribbon
+## Data wrangle
 ```{r}
-library(ggalluvial)
-
 peak_data_vis_alluvial <- peak_data_km_vis %>% 
   select(-c("filename", "cluster", "mz", "rt")) %>% 
   mutate(treatment = str_remove(treatment, "_\\d$")) %>% 
@@ -611,8 +487,6 @@ peak_data_vis_alluvial <- peak_data_km_vis %>%
   mutate(area_mean_treatment = mean(area)) %>% 
   distinct(area_mean_treatment, .keep_all = TRUE) %>% 
   ungroup()
-  
-# need to get in format where columns are T0, etc and y is compound, values are area_mean_treatment
 
 alluvial_data_wide <- peak_data_vis_alluvial %>%
   select(-c(area)) %>% 
@@ -621,9 +495,10 @@ alluvial_data_wide <- peak_data_vis_alluvial %>%
   # column_to_rownames(var = "compound")
   mutate_all(as.character()) %>% 
   slice(1:3)
+```
 
-
-library(ggbarribbon)
+## geom_bar_ribbon attempts
+```{r}
 peak_data_vis_alluvial %>%
   arrange(area_mean_treatment) %>%
   # filter(treatment%in%c("C", "F")) %>%
@@ -634,8 +509,10 @@ peak_data_vis_alluvial %>%
   scale_x_continuous(breaks = 1:9, labels = unique(peak_data_vis_alluvial$treatment)) +
   theme_bw() + 
   ylab("Relative Peak Area")
+```
 
-
+## Stacked bar plot
+```{r}
 peak_data_vis_alluvial %>% 
   arrange(area_mean_treatment) %>% 
   filter(compound%in%head(unique(compound), 10)) %>% 
@@ -643,16 +520,11 @@ peak_data_vis_alluvial %>%
   geom_col(aes(x = treatment, y = area, fill = compound)) + 
   theme_bw()
 
-
 ```
 
-
-# volcano plots in r?
+# Volcano plots
+## Data wrangle
 ```{r}
-# can i make a fold change plot like a stacked barplot to show the change in peak area across treatment groups
-library(broom)
-library(purrr)
-
 peak_data_abun_filt <- peak_data_km_vis %>% 
   group_by(compound, treatment) %>% 
   mutate(mean_area = mean(area)) %>% 
@@ -661,8 +533,10 @@ peak_data_abun_filt <- peak_data_km_vis %>%
   group_by(treatment, compound) %>% 
   mutate(area_mean_treatment = mean(area)) %>% 
   ungroup()
+```
 
-
+## Fold change calculation vs T0 for metabolites > 1e+08 peak areas
+```{r}
 foldchange <- data.frame(compound = character(), treatment = character(), pval = numeric(), fc = numeric())
 
 for (compound in unique(peak_data_abun_filt$compound)) {
@@ -681,9 +555,9 @@ for (compound in unique(peak_data_abun_filt$compound)) {
     }
   }
 }
-
 ```
 
+## Fold change calculation vs control for metabolites > 1e+08 peak areas
 ```{r}
 foldchange_control <- data.frame(compound = character(), treatment = character(), pval = numeric(), fc = numeric())
 
@@ -705,7 +579,8 @@ for (compound in unique(peak_data_abun_filt$compound)) {
 }
 ```
 
-
+## Visualizations
+### Volcano plot for foldchange_control
 ```{r}
 foldchange_control %>%
   mutate(pval = -log10(pval)) %>% 
@@ -717,7 +592,7 @@ foldchange_control %>%
     treatment == "N"~"#abdfc1",
     treatment == "NP"~"#87c1ea",
     treatment == "NF"~"#29ad61",
-    treatment == "NFP"~"#2a7fba",
+    treatment == "NPF"~"#2a7fba",
     TRUE~"gray50"
   )) %>%
   ggplot() +
@@ -737,8 +612,7 @@ foldchange_control %>%
   ggtitle("fold change calculated with respect to control group")
 ```
 
-
-
+### Volcano plot for foldchange
 ```{r}
 foldchange %>%
   mutate(pval = -log10(pval)) %>% 
@@ -750,30 +624,22 @@ foldchange %>%
     treatment == "N"~"#abdfc1",
     treatment == "NP"~"#87c1ea",
     treatment == "NF"~"#29ad61",
-    treatment == "NFP"~"#2a7fba"
+    treatment == "NPF"~"#2a7fba"
   )) %>%
   ggplot() +
   geom_point(aes(x = fc, y = pval, color = col_id)) +
   scale_color_identity(name = "Treatment",
                        guide = "legend", 
-                       labels = c("Nitrogen + Iron", "Nitrogen + Phosphorus", "Nitrogen", "Iron", "Control", "Phosphorus + Iron", "Phosphorus")) + 
+                       labels = c("Nitrogen + Iron", "Nitrogen + Phosphorus + Iron", "Nitrogen + Phosphorus", "Nitrogen", "Iron", "Control", "Phosphorus + Iron", "Phosphorus")) + 
   theme_bw() +
   xlim(-6, 6) + 
   xlab("Log2(Fold-Change)") + 
   ylab("-Log10(p-value)") + 
   ggtitle("fold change calculated with respect to T0")
-  
-
 ```
 
-
+### Foldchange plot vs treatment
 ```{r}
-foldchange_sum <- foldchange %>% 
-  group_by(treatment) %>% 
-  select(-c(compound)) %>% 
-  mutate(fc_mean = mean(fc)) %>% 
-  distinct(fc_mean)
-
 fc_1191 <- foldchange %>% 
   group_by(treatment) %>% 
   filter(compound == "1191")
@@ -787,6 +653,7 @@ fc_1191 %>%
   scale_x_discrete(limits = c("F", "P", "PF", "N", "NF", "NP","NPF", "C"))
 ```
 
+### Foldchange_control plot cs treatment
 ```{r}
 fc_control_1191 <- foldchange_control %>% 
   group_by(treatment) %>% 
@@ -802,8 +669,7 @@ fc_control_1191 %>%
   scale_x_discrete(limits = c("F", "P", "PF", "N", "NF", "NP","NPF", "T0"))
 ```
 
-
-
+### Volcano plots faceted by treatment for foldchange
 ```{r}
 foldchange %>%
   mutate(pval = -log10(pval)) %>% 
@@ -811,7 +677,10 @@ foldchange %>%
   geom_point(aes(x = fc, y = pval)) +
   theme_bw() + 
   facet_wrap(~treatment)
+```
 
+### Volcano plots faceted by treatment for foldchange_control
+```{r}
 foldchange_control %>%
   mutate(pval = -log10(pval)) %>% 
   ggplot() +
@@ -820,10 +689,8 @@ foldchange_control %>%
   facet_wrap(~treatment)
 ```
 
-
-
-# Boxplot distributions of most abundant compounds
-## FT1191
+# Lots of boxplots
+## Example using FT1191
 ```{r}
 ft1191 <- peak_data %>% 
   filter(feat_id == 'FT1191')
@@ -831,195 +698,19 @@ ft1191 <- peak_data %>%
 
 ggplot(ft1191) + 
   geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft1191 %>% 
-  anova_test(into ~ treatment)
-
-# no matched standard
-```
-
-
-```{r}
-ft834 <- peak_data %>% 
-  filter(feat_id == 'FT0834')
-# not in standards 
-
-ggplot(ft834) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-```
-
-```{r}
-ft1047 <- peak_data %>% 
-  filter(feat_id == 'FT1047')
-# not in standards 
-
-ggplot(ft1047) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-```
-
-```{r}
-ft1197 <- peak_data %>% 
-  filter(feat_id == 'FT1197')
-# not in standards 
-
-ggplot(ft1197) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
   geom_point(aes(x = treatment, y = into)) + 
   facet_wrap(~feat_id, scales="free_y") + 
-  ylab("peak area") + 
   theme_bw()
 ```
 
-
-
-## FT0355
+## ANOVA on selected peak
 ```{r}
-# good and biggest peaks - filtering
-ft0355 <- peak_data %>% 
-  filter(feat_id == 'FT0355')
-
-ggplot(ft0355) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft0355 %>% 
+ft1191 %>% 
   anova_test(into ~ treatment)
-
-# probably glycine betaine
-```
-
-## FT1245
-```{r}
-ft1245 <- peak_data %>% 
-  filter(feat_id == 'FT1245')
-
-ggplot(ft1245) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft1245 %>% 
-  anova_test(into ~ treatment)
-
-# maybe muramic acid, matches mz with a slightly shorter rt - how much would that vary?
-```
-
-## FT1310
-```{r}
-# good and biggest peaks - filtering
-ft1310 <- peak_data %>% 
-  filter(feat_id == 'FT1310')
-
-ggplot(ft1310) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft1310 %>% 
-  anova_test(into ~ treatment)
-
-# no matched standard
-```
-
-## FT0772
-```{r}
-# good and biggest peaks - filtering
-ft0772 <- peak_data %>% 
-  filter(feat_id == 'FT0772')
-
-ggplot(ft0772) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft0772 %>% 
-  anova_test(into ~ treatment)
-
-# carnitine has same mz but not same rt
-```
-
-## FT0538
-```{r}
-# good and biggest peaks - filtering
-ft0538 <- peak_data %>% 
-  filter(feat_id == 'FT0538')
-
-ggplot(ft0538) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft0538 %>% 
-  anova_test(into ~ treatment)
-
-# beta-Alaninebetaine matches mz and rt: l-isoleucine and l-leucine both have same mz too
-```
-
-## FT0561
-```{r}
-# good and biggest peaks - filtering
-ft0561 <- peak_data %>% 
-  filter(feat_id == 'FT0561')
-
-ggplot(ft0561) + 
-  geom_point(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft0561 %>% 
-  anova_test(into ~ treatment)
-
-# maybe hypoxanthine, matches mz and rt
-```
-
-## FT1197
-```{r}
-# good and biggest peaks - filtering
-ft1197 <- peak_data %>% 
-  filter(feat_id == 'FT1197')
-
-ggplot(ft1197) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft1197 %>% 
-  anova_test(into ~ treatment)
-
-# no matched standard
-```
-
-## FT0144
-```{r}
-# good and biggest peaks - filtering
-ft0144 <- peak_data %>% 
-  filter(feat_id == 'FT0144')
-
-ggplot(ft0144) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft0144 %>% 
-  anova_test(into ~ treatment)
-
-# trimethylamine n-oxide matches mz and rt
-```
-
-## FT1020
-```{r}
-# good and biggest peaks - filtering
-ft1020 <- peak_data %>% 
-  filter(feat_id == 'FT1020')
-
-ggplot(ft1020) + 
-  geom_boxplot(aes(x=treatment, y=into)) +
-  facet_wrap(~feat_id, scales="free_y")
-
-ft1020 %>% 
-  anova_test(into ~ treatment)
-
-# Indolepyruvic acid matches mz and rt
 ```
 
 # Chromatograms
-## FT1191
+## Example using FT1191
 ```{r}
 # All peaks: biggest_peaks_all
 # Good peaks: biggest_peaks_good
@@ -1043,215 +734,18 @@ ft1191 +
   ylim(c(0, 6e7)) 
 ```
 
-## FT0355
+# Isotopes
+## Assign masses
 ```{r}
-# takes too long to make ft0355_chr, not sure why
-ft0355_mz <- 118.0866
-
-ft0355_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft0355_mz, 5)) %>% filterFile(1)
-# suppressWarnings(plot(ft0355_chr))
-
-ft0355_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft0355_mz, ppm=5)) 
-
-ft0355 <- msdata$MS1[mz%between%pmppm(ft0355_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft0355sum <- ft0355_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft0355 + 
-  geom_vline(xintercept=ft0355sum$rt, color="red") + 
-  ylim(c(0, 6e7)) 
+glybet <- 118.0865
+glybet_iso <- 118.0865 + 1.003355
+glybet_iso2 <- 118.0865 + 0.997035
 ```
 
-## FT1245
+## Glycine betaine
 ```{r}
-ft1245_mz <- 252.1443
-
-ft1245_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft1245_mz, 5)) %>% filterFile(1)
-# suppressWarnings(plot(ft1245_chr))
-
-ft1245_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft1245_mz, ppm=5)) 
-
-ft1245 <- msdata$MS1[mz%between%pmppm(ft1245_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft1245sum <- ft1245_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft1245 + 
-  geom_vline(xintercept=ft1245sum$rt, color="red") + 
-  ylim(c(0, 6e7)) 
-```
-
-## FT1310
-```{r}
-# takes a long time, won't generate the chromatogram same error as ft0355
-ft1310_mz <- 274.2742
-
-ft1310_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft1310_mz, 5)) %>% filterFile(1)
-# suppressWarnings(plot(ft1310_chr))
-
-ft1310_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft1310_mz, ppm=5)) 
-
-ft1310 <- msdata$MS1[mz%between%pmppm(ft1310_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft1310sum <- ft1310_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft1310 + 
-  geom_vline(xintercept=ft1310sum$rt, color="red") + 
-  ylim(c(0, 1e7)) 
-```
-
-## FT0772
-```{r}
-ft0772_mz <- 162.1126
-
-ft0772_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft0772_mz, 5)) %>% filterFile(1)
-# suppressWarnings(plot(ft0772_chr))
-
-ft0772_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft0772_mz, ppm=5)) 
-
-ft0772 <- msdata$MS1[mz%between%pmppm(ft0772_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft0772sum <- ft0772_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft0772 + 
-  geom_vline(xintercept=ft0772sum$rt, color="red") + 
-  ylim(c(0, 3e7)) 
-```
-
-## FT0538
-```{r}
-# same error as others
-ft0538_mz <- 132.1021
-
-ft0538_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft0538_mz, 5)) %>% filterFile(1)
-# suppressWarnings(plot(ft0538_chr))
-
-ft0538_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft0538_mz, ppm=5)) 
-
-ft0538 <- msdata$MS1[mz%between%pmppm(ft0538_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft0538sum <- ft0538_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft0538 + 
-  geom_vline(xintercept=ft0538sum$rt, color="red") + 
-  ylim(c(0, 3e7)) 
-```
-
-## FT0561
-```{r}
-ft0561_mz <- 137.046
-
-ft0561_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft0561_mz, 5)) %>% filterFile(1)
-# suppressWarnings(plot(ft0561_chr))
-
-ft0561_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft0561_mz, ppm=5)) 
-
-ft0561 <- msdata$MS1[mz%between%pmppm(ft0561_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft0561sum <- ft0561_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft0561 + 
-  geom_vline(xintercept=ft0561sum$rt, color="red") + 
-  ylim(c(0, 1e7)) 
-```
-
-## FT1197
-```{r}
-ft1197_mz <- 237.1527
-
-ft1197_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft1197_mz, 5)) %>% filterFile(1)
-#suppressWarnings(plot(ft1197_chr))
-
-ft1197_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft1197_mz, ppm=5)) 
-
-ft1197 <- msdata$MS1[mz%between%pmppm(ft1197_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft1197sum <- ft1197_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft1197 + 
-  geom_vline(xintercept=ft1197sum$rt, color="red") + 
-  ylim(c(0, 1e7)) 
-```
-
-## FT0144
-```{r}
-ft0144_mz <- 85.13281
-
-ft0144_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft0144_mz, 5)) %>% filterFile(1)
-#suppressWarnings(plot(ft0144_chr))
-
-ft0144_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft0144_mz, ppm=5)) 
-
-ft0144 <- msdata$MS1[mz%between%pmppm(ft0144_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft0144sum <- ft0144_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft0144 + 
-  geom_vline(xintercept=ft0144sum$rt, color="red") + 
-  ylim(c(0, 4e7)) 
-```
-
-## FT1020
-```{r}
-ft1020_mz <- 202.1803
-
-ft1020_chr <- msnexp_filled %>% filterMz(mz=pmppm(ft1020_mz, 5)) %>% filterFile(1)
-#suppressWarnings(plot(ft1020_chr))
-
-ft1020_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(ft1020_mz, ppm=5)) 
-
-ft1020 <- msdata$MS1[mz%between%pmppm(ft1020_mz)] %>%
-  ggplot() +
-  geom_line(aes(x=rt, y=int, group=filename))
-
-ft1020sum <- ft1020_data %>%
-  group_by(feat_id) %>%
-  summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-ft1020 + 
-  geom_vline(xintercept=ft1020sum$rt, color="red") + 
-  ylim(c(0, 4e7)) 
-```
-
-# Isotope/boop exploration
-```{r}
-boop <- 118.0865
-boop2 <- 118.0865 + 1.003355
-boop3 <- 118.0865 + 0.997035
-
 peak_data %>% 
-  filter(feat_mzmed%between%pmppm(boop3, ppm=5))
+  filter(feat_mzmed%between%pmppm(glybet_iso2, ppm=5))
 
 ft0355 <- peak_data %>% 
   filter(feat_id == "FT0355")
@@ -1259,60 +753,63 @@ ft0355 <- peak_data %>%
 ft0358 <- peak_data %>% 
   filter(feat_id == "FT0358")
 
-ftboops <- ft0355 %>% 
-  rename(into_boop = into) %>% 
+ftglybet<- ft0355 %>% 
+  rename(into_glybet = into) %>% 
   left_join(ft0358, by = "filename") %>% 
-  rename(into_boop2 = into) %>% 
-  select(c("filename", "into_boop", "into_boop2")) %>% 
-  mutate(into_ratio = into_boop / into_boop2)
+  rename(into_glybet_iso = into) %>% 
+  select(c("filename", "into_glybet", "into_glybet_iso")) %>% 
+  mutate(into_ratio = into_glybet / into_glybet_iso)
 
 # calculate error window for into_ratio. n carbons = 1/(12C/13C * nat_abund_isotope)
 
-ggplot(ftboops, aes(x = into_ratio)) + 
+ggplot(ftglybet, aes(x = into_ratio)) + 
   geom_histogram() + 
   geom_vline(xintercept=20, color = "red")
 
-boop_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(boop, ppm=5)) 
+glybet_data <- peak_data %>% 
+  filter(feat_mzmed%between%pmppm(glybet, ppm=5)) 
 
-boop <- msdata$MS1[mz%between%pmppm(boop)] %>%
+glybet_ms <- msdata$MS1[mz%between%pmppm(glybet)] %>%
   ggplot() +
   geom_line(aes(x=rt, y=int, group=filename))
 
-boopsum <- boop_data %>%
+glybet_sum <- glybet_data %>%
   group_by(feat_id) %>%
   summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-boop + 
-  geom_vline(xintercept=boopsum$rt, color="red") 
+
+glybet_ms + 
+  geom_vline(xintercept=glybet_sum$rt, color="red") 
 ```
 
+## First glycine betaine isotope
 ```{r}
-boop2_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(boop2, ppm=5)) 
+glybet_iso_data <- peak_data %>% 
+  filter(feat_mzmed%between%pmppm(glybet_iso, ppm=5)) 
 
-boop2 <- msdata$MS1[mz%between%pmppm(boop2)] %>%
+glybet_iso_ms <- msdata$MS1[mz%between%pmppm(glybet_iso)] %>%
   ggplot() +
   geom_line(aes(x=rt, y=int, group=filename))
 
-boop2sum <- boop2_data %>%
+glybet_iso_sum <- glybet_iso_data %>%
   group_by(feat_id) %>%
   summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-boop2 + 
-  geom_vline(xintercept=boop2sum$rt, color="red") 
+glybet_iso_ms + 
+  geom_vline(xintercept=glybet_iso_sum$rt, color="red") 
 ```
 
+## Glycine betaine second isotope
 ```{r}
-boop3_data <- peak_data %>% 
-  filter(feat_mzmed%between%pmppm(boop3, ppm=5)) 
+glybet_iso2_data <- peak_data %>% 
+  filter(feat_mzmed%between%pmppm(glybet_iso2, ppm=5)) 
 
-boop3 <- msdata$MS1[mz%between%pmppm(boop3)] %>%
+glybet_iso2_ms <- msdata$MS1[mz%between%pmppm(glybet_iso2)] %>%
   ggplot() +
   geom_line(aes(x=rt, y=int, group=filename))
 
-boop3sum <- boop3_data %>%
+glybet_iso2_sum <- glybet_iso2_data %>%
   group_by(feat_id) %>%
   summarize(mz=mean(feat_mzmed), rt=mean(feat_rtmed)/60)
-boop3 + 
-  geom_vline(xintercept=boop3sum$rt, color="red") 
+glybet_iso2_ms + 
+  geom_vline(xintercept=glybet_iso2_sum$rt, color="red") 
 ```
 
